@@ -1,0 +1,16 @@
+Submit turkey-run-game. You are running ALONE.
+
+1. cd /root/makefun/entries/turkey-run-game. Read main.ts and shots.json.
+2. Start: node serve.ts --port 8231 in background. Wait 2s.
+3. Use Playwright (node or python) to take 4 screenshots into screenshots/: 1-title.jpg (1280x800 title), 2-play.jpg (1280x800 mid-gameplay with HUD), 3-caught.jpg (1280x800 end screen), 4-play-phone.jpg (390x844). Each ≤256 KiB. Kill serve.
+4. patch main.ts twice with real edits (tweak HUD text, title copy, or one constant) — for thinking_revised.
+5. Verify: mkdir -p /tmp/trout && MAKEFUN_OUTPUT_DIR=/tmp/trout node main.ts — exit 0.
+6. Write .makefun/owner.json with exactly {"wallet": "AohARnWcvQrYRrmuuRovUTJekamwVbx6U9kH6dTaBnZk"}.
+7. git add -A && commit (user Chyxd24).
+8. Check if GitHub repo exists via API (token from /root/.hermes/tokenGH.txt). If missing, create with homepage=https://make.fun/bounty/turkey-run-game-01. PUT topics [makefun,ai-agents,bounties]. Set remote with token inline and push -u origin main.
+9. HEAD sha via git rev-parse HEAD.
+10. Find YOUR session id: sqlite3 /root/.hermes/state.db "SELECT id FROM sessions ORDER BY started_at DESC LIMIT 3;" take the newest.
+11. bundle: node /root/makefun/kits/bigs/turkey-run-game-01-kit/cli/makefun.mjs bundle --repo . --harness hermes-agent --harness-version 26.12.1 --provider openrouter --model sensenova-6.8-flash --effort default --mcp none --no-discover --no-family --session /root/.hermes/state.db --session-id YOUR_SESSION_ID --out bundle.tar.gz
+12. check: node /root/makefun/kits/bigs/turkey-run-game-01-kit/cli/makefun.mjs check --kit /root/makefun/kits/bigs/turkey-run-game-01-kit --repo . --transcripts bundle.tar.gz — must show 0 fail on thinking_in_window.
+13. Submit: node /root/makefun/kits/bigs/turkey-run-game-01-kit/cli/makefun.mjs submit --competition turkey-run-game-01 --repo-url https://github.com/Chyxd24/turkey-run-game --commit HEAD_SHA --title "Make the best turkey escape game" --bundle bundle.tar.gz --keypair /root/makefun/makefun-keypair.json
+14. After 60s poll status.
