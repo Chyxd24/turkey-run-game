@@ -1,0 +1,42 @@
+/* Turkey Trot: Escape the Harvest — shell styles.
+   Dark November palette: deep plum night, harvest orange, corn gold, cranberry. */
+
+:root {
+  --night: #1b1120;
+  --dusk: #2a1830;
+  --harvest: #e8712a;
+  --corn: #f2c14e;
+  --cranberry: #b8334a;
+  --hay: #d8b98a;
+  --frost: #f4ede2;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--night);
+  color: var(--frost);
+  font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+canvas#game {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  background: var(--night);
+  image-rendering: auto;
+}
+
+/* On tall/narrow screens keep the canvas full-bleed; the game letterboxes internally. */
+@media (max-width: 640px) {
+  body { background: var(--dusk); }
+  canvas#game { width: 100vw; height: 100vh; }
+}

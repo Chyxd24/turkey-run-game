@@ -1,0 +1,6 @@
+[
+  { "name": "1-title.jpg", "shot": "title", "seed": 1 },
+  { "name": "2-play.jpg", "shot": "play", "seed": 7 },
+  { "name": "3-caught.jpg", "shot": "caught", "seed": 3 },
+  { "name": "4-phone.jpg", "shot": "play", "seed": 7, "viewport": { "width": 480, "height": 800 } }
+]
