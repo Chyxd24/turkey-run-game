@@ -1,31 +1,33 @@
-// World simulation: a horizontally scrolling chase.
+// The simulation: a side-scrolling chase.
 //
-// The turkey runs right; the world scrolls left. Ovens are ground obstacles to
-// jump, carving knives swoop in from the sky to duck under, corn is a bonus to
-// grab, and the farmer shadows the turkey from behind, surging when he gets
-// close. A run ends when the turkey is caught (farmer reaches it, or hazards
-// spend the last life) or when it covers escapeDistance and gets away.
+// The turkey stays on the runway while the world scrolls past. Ovens sit on the
+// ground to jump, carving knives sweep in from the air to duck under, corn is a
+// pickup worth points, and the farmer follows from behind and surges when he
+// closes in. A run finishes two ways: the turkey is caught (the farmer reaches
+// it, or hazards spend the last life) or it covers escapeDistance and gets away.
+//
+// Physics runs on a fixed step from main.js. `step(dt, input)` advances one
+// slice of time against whatever input the player is holding.
 
 import { CONFIG, SCREEN, END_REASON } from './config.js';
 import { makeRandom } from './random.js';
 
-function aabb(a, b) {
-  return (
-    a.x < b.x + b.w &&
-    a.x + a.w > b.x &&
-    a.y < b.y + b.h &&
-    a.y + a.h > b.y
-  );
+const VW = CONFIG.view.width;
+const GROUND = CONFIG.groundY;
+
+// Axis-aligned overlap test between two boxes {x,y,w,h}.
+function overlaps(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x
+    && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
 export class World {
   constructor(seed = 1) {
-    this.seed = seed;
-    this.rand = makeRandom(seed);
     this.reset(seed);
   }
 
-  reset(seed = this.seed) {
+  // Put the world back on the title screen with a fresh seeded random source.
+  reset(seed = 1) {
     this.seed = seed;
     this.rand = makeRandom(seed);
     const T = CONFIG.turkey;
@@ -33,17 +35,17 @@ export class World {
 
     this.screen = SCREEN.TITLE;
     this.endReason = null;
-    this.time = 0;            // seconds of live play
-    this.distance = 0;        // metres-ish travelled
+    this.time = 0;              // seconds of live play
+    this.distance = 0;          // metres-ish travelled
     this.score = 0;
     this.lives = CONFIG.lives;
     this.speed = CONFIG.scrollSpeed;
-    this.shake = 0;           // camera shake on hit
-    this.flash = 0;           // white flash on near-miss
+    this.shake = 0;             // camera shake on a hit
+    this.flash = 0;             // white flash on a near miss
     this.stagesCleared = 0;
 
     this.turkey = {
-      x: 240, y: CONFIG.groundY - T.h, w: T.w, h: T.h,
+      x: 240, y: GROUND - T.h, w: T.w, h: T.h,
       vy: 0, onGround: true,
       coyote: 0, jumpBuffer: 0,
       ducking: false,
@@ -52,7 +54,7 @@ export class World {
     };
 
     this.farmer = {
-      x: 240 - 300, y: CONFIG.groundY - F.h, w: F.w, h: F.h,
+      x: 240 - 300, y: GROUND - F.h, w: F.w, h: F.h,
       vx: 0, lag: F.startLag, surge: 0, surgeCooldown: F.surgeCooldown,
       armSwing: 0,
     };
@@ -61,7 +63,7 @@ export class World {
     this.knives = [];
     this.corn = [];
     this.particles = [];
-    this.floaters = [];     // "+25" style floating texts
+    this.floaters = [];         // short "+25" style texts
     this.nearMissTimer = 0;
 
     this.timers = {
@@ -71,23 +73,31 @@ export class World {
     };
   }
 
+  // Leave the title/end screen and begin a fresh run with a new seed.
   startRun(seed = Date.now() % 100000) {
     this.reset(seed);
     this.screen = SCREEN.PLAY;
   }
 
-  // ---- spawning -----------------------------------------------------------
+  currentStage() {
+    let stage = CONFIG.stages[0];
+    for (const s of CONFIG.stages) if (this.distance >= s.atDistance) stage = s;
+    return stage;
+  }
+
+  // ---- spawning ----------------------------------------------------------
+
   spawnOven() {
     const O = CONFIG.oven;
-    this.ovens.push({ x: CONFIG.view.width + 80, y: CONFIG.groundY - O.h, w: O.w, h: O.h, glow: 1 });
+    this.ovens.push({ x: VW + 80, y: GROUND - O.h, w: O.w, h: O.h, glow: 1 });
   }
 
   spawnKnife() {
     const K = CONFIG.knife;
-    // Knives swoop toward the turkey's current height band.
+    // Knives aim at the band the turkey occupies, a little above the runway.
     this.knives.push({
-      x: CONFIG.view.width + 80,
-      y: CONFIG.groundY - 150 - this.rand.range(0, 60),
+      x: VW + 80,
+      y: GROUND - 150 - this.rand.range(0, 60),
       w: K.w, h: K.h,
       vy: 0,
       spin: 0,
@@ -98,12 +108,14 @@ export class World {
     const C = CONFIG.corn;
     const high = this.rand.chance(0.45);
     this.corn.push({
-      x: CONFIG.view.width + 60,
-      y: high ? CONFIG.groundY - 150 : CONFIG.groundY - 70,
-      w: C.w, h: C.h, bob: this.rand.range(0, Math.PI * 2),
+      x: VW + 60,
+      y: high ? GROUND - 150 : GROUND - 70,
+      w: C.w, h: C.h,
+      bob: this.rand.range(0, Math.PI * 2),
     });
   }
 
+  // A handful of short-lived particles, used for jumps, landings and pickups.
   burst(x, y, color, n = 10, spread = 160) {
     for (let i = 0; i < n; i++) {
       this.particles.push({
@@ -118,27 +130,18 @@ export class World {
     }
   }
 
+  // A floating text that drifts up and fades over about a second.
   floater(x, y, text, color) {
     this.floaters.push({ x, y, text, color, life: 0.9 });
   }
 
-  currentStage() {
-    let s = CONFIG.stages[0];
-    for (const st of CONFIG.stages) if (this.distance >= st.atDistance) s = st;
-    return s;
-  }
+  // ---- fixed step --------------------------------------------------------
 
-  // ---- main fixed-step ----------------------------------------------------
+  // Advance the world by `dt` seconds against the current input. Title and end
+  // screens only look for a start press; otherwise the run is simulated.
   step(dt, input) {
-    if (this.screen === SCREEN.TITLE) {
+    if (this.screen !== SCREEN.PLAY) {
       if (input && input.startPressed) this.startRun();
-      return;
-    }
-    if (this.screen === SCREEN.END) {
-      if (input && input.startPressed) {
-        // restart straight into a fresh run
-        this.startRun();
-      }
       return;
     }
     this.simulate(dt, input);
@@ -149,66 +152,16 @@ export class World {
     const F = CONFIG.farmer;
     this.time += dt;
 
-    // difficulty ramps with time on the run
+    // Difficulty ramps: the runway scrolls faster the longer the run lasts.
     this.speed = Math.min(CONFIG.scrollMax, CONFIG.scrollSpeed + this.time * CONFIG.scrollAccel);
 
-    // ---- turkey horizontal control ----
-    const tk = this.turkey;
-    let moveX = 0;
-    if (input) {
-      if (input.left) moveX -= 1;
-      if (input.right) moveX += 1;
-    }
-    tk.x += moveX * T.runSpeed * dt;
-    // keep the turkey on screen; the world scrolls under it
-    tk.x = Math.max(T.boundsPadding, Math.min(CONFIG.view.width - T.w - T.boundsPadding, tk.x));
-    tk.runCycle += dt * (this.speed / 90);
+    this.moveTurkey(dt, input);
+    this.scrollWorld(dt);
 
-    // ---- jump / gravity ----
-    if (input && input.jumpPressed) tk.jumpBuffer = T.jumpBuffer;
-    tk.jumpBuffer = Math.max(0, tk.jumpBuffer - dt);
-    tk.coyote = tk.onGround ? T.coyoteTime : Math.max(0, tk.coyote - dt);
-
-    if (tk.jumpBuffer > 0 && tk.coyote > 0) {
-      tk.vy = T.jumpVelocity;
-      tk.onGround = false;
-      tk.coyote = 0;
-      tk.jumpBuffer = 0;
-      this.burst(tk.x + tk.w / 2, tk.y + tk.h, '#d8b98a', 6, 90);
-    }
-
-    // duck shrinks the hitbox (only meaningful on the ground)
-    tk.ducking = !!(input && input.duck) && tk.onGround;
-    const targetH = tk.ducking ? T.duckH : T.h;
-
-    tk.vy = Math.min(tk.vy + T.gravity * dt, T.maxFall);
-    tk.y += tk.vy * dt;
-
-    const groundTop = CONFIG.groundY - targetH;
-    if (tk.y >= groundTop) {
-      if (!tk.onGround && tk.vy > 0) {
-        this.burst(tk.x + tk.w / 2, CONFIG.groundY, '#d8b98a', 4, 70);
-      }
-      tk.y = groundTop;
-      tk.vy = 0;
-      tk.onGround = true;
-    }
-    tk.h = targetH;
-    if (tk.ducking) tk.y = CONFIG.groundY - T.duckH;
-
-    if (tk.invuln > 0) tk.invuln -= dt;
-
-    // ---- world scroll & distance ----
-    this.distance += (this.speed * dt) / 10;   // px -> "metres"
-    if (this.distance >= CONFIG.escapeDistance) {
-      this.endRun(END_REASON.ESCAPED);
-      return;
-    }
-
-    // ---- farmer chase ----
+    // ---- the chase ----
     const fm = this.farmer;
     if (fm.lag > 0) fm.lag -= dt;
-    let fspeed = F.baseSpeed + this.speed * 0.25;
+    let chase = F.baseSpeed + this.speed * 0.25;
     fm.surgeCooldown -= dt;
     const gap = this.turkey.x - (fm.x + fm.w);
     if (fm.surgeCooldown <= 0 && gap < 320) {
@@ -217,56 +170,99 @@ export class World {
     }
     if (fm.surge > 0) {
       fm.surge -= dt;
-      fspeed = F.catchSpeed + this.speed * 0.25;
+      chase = F.catchSpeed + this.speed * 0.25;
     }
-    // farmer drifts toward the turkey's x, pulled forward by the scroll
-    const chase = gap > 0 ? (gap / 320) : 0;
-    fm.vx = fspeed * (0.55 + 0.45 * chase);
+    // The farmer drifts toward the turkey's column, pulled along by the scroll,
+    // but never quite draws level with it until the run ends.
+    const closeness = gap > 0 ? gap / 320 : 0;
+    fm.vx = chase * (0.55 + 0.45 * closeness);
     fm.x += fm.vx * dt;
     fm.x = Math.min(fm.x, this.turkey.x - fm.w * 0.4);
-    fm.y = CONFIG.groundY - fm.h;
+    fm.y = GROUND - fm.h;
     fm.armSwing += dt * 8;
 
-    // farmer catches the turkey?
-    if (aabb(this.turkeyBox(), fm)) {
-      this.hitTurkey('caught');
-    }
+    if (overlaps(this.turkeyBox(), fm)) this.hitTurkey('caught');
 
-    // ---- hazards update ----
     this.updateOvens(dt);
     this.updateKnives(dt);
     this.updateCorn(dt);
     this.updateParticles(dt);
 
-    // camera shake / flash decay
+    // shake and flash decay back toward a calm camera
     this.shake = Math.max(0, this.shake - dt * 30);
     this.flash = Math.max(0, this.flash - dt * 2.5);
 
-    // spawn timers
-    this.timers.oven -= dt;
-    if (this.timers.oven <= 0) {
-      this.spawnOven();
-      this.timers.oven = this.rand.range(...CONFIG.oven.spawnEvery) * (CONFIG.scrollSpeed / this.speed + 0.3);
-    }
-    this.timers.knife -= dt;
-    if (this.timers.knife <= 0) {
-      this.spawnKnife();
-      this.timers.knife = this.rand.range(...CONFIG.knife.spawnEvery) * (CONFIG.scrollSpeed / this.speed + 0.3);
-    }
-    this.timers.corn -= dt;
-    if (this.timers.corn <= 0) {
-      this.spawnCorn();
-      this.timers.corn = this.rand.range(...CONFIG.corn.spawnEvery);
-    }
-
-    // score from distance
-    this.score += this.speed * dt / 10 * CONFIG.score.perMetre;
+    this.spawnOnTimers(dt);
+    this.score += (this.speed * dt) / 10 * CONFIG.score.perMetre;
     if (this.nearMissTimer > 0) this.nearMissTimer -= dt;
   }
 
+  moveTurkey(dt, input) {
+    const T = CONFIG.turkey;
+    const tk = this.turkey;
+
+    let moveX = 0;
+    if (input) {
+      if (input.left) moveX -= 1;
+      if (input.right) moveX += 1;
+    }
+    tk.x += moveX * T.runSpeed * dt;
+    tk.x = Math.max(T.boundsPadding, Math.min(VW - T.w - T.boundsPadding, tk.x));
+    tk.runCycle += dt * (this.speed / 90);
+
+    // Jump buffering plus coyote time: a press just before landing still jumps,
+    // and a press just after leaving the ground still counts as a take-off.
+    if (input && input.jumpPressed) tk.jumpBuffer = T.jumpBuffer;
+    tk.jumpBuffer = Math.max(0, tk.jumpBuffer - dt);
+    tk.coyote = tk.onGround ? T.coyoteTime : Math.max(0, tk.coyote - dt);
+    if (tk.jumpBuffer > 0 && tk.coyote > 0) {
+      tk.vy = T.jumpVelocity;
+      tk.onGround = false;
+      tk.coyote = 0;
+      tk.jumpBuffer = 0;
+      this.burst(tk.x + tk.w / 2, tk.y + tk.h, '#d8b98a', 6, 90);
+    }
+
+    // Ducking shrinks the hitbox, but only while the turkey is on the ground.
+    tk.ducking = !!(input && input.duck) && tk.onGround;
+    const targetH = tk.ducking ? T.duckH : T.h;
+
+    tk.vy = Math.min(tk.vy + T.gravity * dt, T.maxFall);
+    tk.y += tk.vy * dt;
+
+    const groundTop = GROUND - targetH;
+    if (tk.y >= groundTop) {
+      if (!tk.onGround && tk.vy > 0) {
+        this.burst(tk.x + tk.w / 2, GROUND, '#d8b98a', 4, 70);
+      }
+      tk.y = groundTop;
+      tk.vy = 0;
+      tk.onGround = true;
+    }
+    tk.h = targetH;
+    if (tk.ducking) tk.y = GROUND - T.duckH;
+    if (tk.invuln > 0) tk.invuln -= dt;
+  }
+
+  scrollWorld(dt) {
+    this.distance += (this.speed * dt) / 10;   // px -> "metres"
+    if (this.distance >= CONFIG.escapeDistance) this.endRun(END_REASON.ESCAPED);
+  }
+
+  // ---- hazards -----------------------------------------------------------
+
+  // The turkey's collision box: a few pixels in from the sprite so contact
+  // feels fair rather than pixel-perfect.
   turkeyBox() {
     const tk = this.turkey;
     return { x: tk.x + 6, y: tk.y + 6, w: tk.w - 12, h: tk.h - 8 };
+  }
+
+  // A shared near-miss: grant the bonus, flash the screen, float the text.
+  awardNearMiss(box, label) {
+    this.score += CONFIG.score.nearMiss;
+    this.flash = 0.5;
+    this.floater(box.x, box.y - 20, `${label} +${CONFIG.score.nearMiss}`, '#f2c14e');
   }
 
   updateOvens(dt) {
@@ -274,14 +270,13 @@ export class World {
     for (const o of this.ovens) {
       o.x -= this.speed * dt;
       if (o.glow < 2) o.glow = 1 + Math.sin(this.time * 6) * 0.2;
-      if (aabb(tb, o) && this.turkey.invuln <= 0) {
+      if (overlaps(tb, o) && this.turkey.invuln <= 0) {
         this.hitTurkey('oven', o);
-      } else if (!o.nearMissChecked && Math.abs(o.x + o.w - tb.x) < 26 && this.turkey.invuln <= 0 && this.turkey.onGround) {
-        // grazed past an oven on the ground => near miss
+      } else if (!o.nearMissChecked && Math.abs(o.x + o.w - tb.x) < 26
+                 && this.turkey.invuln <= 0 && this.turkey.onGround) {
+        // Ran past an oven without jumping: a near miss, no life spent.
         o.nearMissChecked = true;
-        this.score += CONFIG.score.nearMiss;
-        this.flash = 0.5;
-        this.floater(tb.x, tb.y - 20, 'Close call! +' + CONFIG.score.nearMiss, '#f2c14e');
+        this.awardNearMiss(tb, 'Close call!');
       }
     }
     this.ovens = this.ovens.filter((o) => o.x + o.w > -60);
@@ -291,17 +286,16 @@ export class World {
     const tb = this.turkeyBox();
     for (const k of this.knives) {
       k.x -= (this.speed + CONFIG.knife.speed) * dt;
-      // gentle downward arc then hold
+      // A gentle downward arc that settles at the top of the runway.
       k.vy += 140 * dt;
-      k.y = Math.min(k.y + k.vy * dt, CONFIG.groundY - k.h);
+      k.y = Math.min(k.y + k.vy * dt, GROUND - k.h);
       k.spin += dt * 10;
-      if (aabb(tb, k) && this.turkey.invuln <= 0) {
+      if (overlaps(tb, k) && this.turkey.invuln <= 0) {
         this.hitTurkey('knife', k);
       } else if (!k.nearMissChecked && k.x + k.w < tb.x && k.x + k.w > tb.x - 30) {
+        // Slipped past underneath: a near miss.
         k.nearMissChecked = true;
-        this.score += CONFIG.score.nearMiss;
-        this.flash = 0.5;
-        this.floater(tb.x, tb.y - 20, 'Ducked! +' + CONFIG.score.nearMiss, '#f2c14e');
+        this.awardNearMiss(tb, 'Ducked!');
       }
     }
     this.knives = this.knives.filter((k) => k.x + k.w > -60);
@@ -312,11 +306,11 @@ export class World {
     for (const c of this.corn) {
       c.x -= this.speed * dt;
       c.bob += dt * 4;
-      if (aabb(tb, c)) {
+      if (overlaps(tb, c)) {
         c.dead = true;
         this.score += CONFIG.corn.value;
         this.burst(c.x + c.w / 2, c.y + c.h / 2, CONFIG.palette.cornGold, 8, 120);
-        this.floater(c.x, c.y - 10, '+' + CONFIG.corn.value, CONFIG.palette.cornGold);
+        this.floater(c.x, c.y - 10, `+${CONFIG.corn.value}`, CONFIG.palette.cornGold);
       }
     }
     this.corn = this.corn.filter((c) => !c.dead && c.x + c.w > -40);
@@ -337,6 +331,30 @@ export class World {
     this.floaters = this.floaters.filter((f) => f.life > 0);
   }
 
+  // Fire the three spawn timers. Each reset is scaled by the current speed so
+  // hazards keep the same spacing on the screen as the run speeds up.
+  spawnOnTimers(dt) {
+    this.timers.oven -= dt;
+    if (this.timers.oven <= 0) {
+      this.spawnOven();
+      this.timers.oven = this.rand.range(...CONFIG.oven.spawnEvery)
+        * (CONFIG.scrollSpeed / this.speed + 0.3);
+    }
+    this.timers.knife -= dt;
+    if (this.timers.knife <= 0) {
+      this.spawnKnife();
+      this.timers.knife = this.rand.range(...CONFIG.knife.spawnEvery)
+        * (CONFIG.scrollSpeed / this.speed + 0.3);
+    }
+    this.timers.corn -= dt;
+    if (this.timers.corn <= 0) {
+      this.spawnCorn();
+      this.timers.corn = this.rand.range(...CONFIG.corn.spawnEvery);
+    }
+  }
+
+  // The turkey took a hit: caught means the run ends, otherwise spend a life
+  // and grant a short stretch of invulnerability.
   hitTurkey(cause, src) {
     const tk = this.turkey;
     if (cause === 'caught') {
@@ -344,22 +362,17 @@ export class World {
       this.endRun(END_REASON.CAUGHT);
       return;
     }
-    // hazard hit: spend a life, grant invulnerability
     this.lives -= 1;
     tk.invuln = CONFIG.turkey.invulnTime;
     this.shake = 18;
     if (src) this.burst(src.x + src.w / 2, src.y + src.h / 2, '#ff8a3d', 14, 200);
     this.floater(tk.x, tk.y - 24, this.lives > 0 ? 'Ouch!' : 'Caught!', '#c0303f');
-    if (this.lives <= 0) {
-      this.endRun(END_REASON.CAUGHT);
-    }
+    if (this.lives <= 0) this.endRun(END_REASON.CAUGHT);
   }
 
   endRun(reason) {
     this.screen = SCREEN.END;
     this.endReason = reason;
-    if (reason === END_REASON.ESCAPED) {
-      this.score += 500; // escape bonus
-    }
+    if (reason === END_REASON.ESCAPED) this.score += 500; // escape bonus
   }
 }
