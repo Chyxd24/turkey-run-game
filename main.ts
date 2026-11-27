@@ -7,7 +7,8 @@
 // reads, using the vendored make.fun library.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts   # local dry-run
+//   MAKEFUN_OUTPUT_DIR=/output node main.ts               # inside the grader
 //
 // Serve locally with `node serve.ts --port 8080`, then open http://localhost:8080.
 
